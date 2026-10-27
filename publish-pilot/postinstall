@@ -1,0 +1,39 @@
+#!/bin/bash
+# Runs as root after the payload is in place. Adds publish-pilot to Claude Code and Claude Desktop
+# for the logged-in user. Never fails the install: what happened goes to the log.
+DIR="/Library/Application Support/publish-pilot"
+LOG="$DIR/install.log"
+exec >>"$LOG" 2>&1
+echo "== install $(date)"
+
+U=$(stat -f%Su /dev/console)
+if [ -z "$U" ] || [ "$U" = root ] || [ "$U" = loginwindow ]; then
+  echo "no logged-in user; run: claude mcp add --scope user publish-pilot -- npx -y publish-pilot-mcp"
+  exit 0
+fi
+. "$DIR/env.sh"
+echo "user=$U home=$H claude=${CLAUDE:-none} node=${NODE:-none}"
+
+if [ -z "$NODE" ] || ! run_as "$NODE" -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)'; then
+  echo "warning: Node.js 22 or newer not found; publish-pilot needs it to run"
+fi
+
+if [ -n "$CLAUDE" ]; then
+  if run_as "$CLAUDE" mcp get publish-pilot >/dev/null 2>&1; then
+    echo "Claude Code: already configured, left as is"
+  elif run_as "$CLAUDE" mcp add --scope user publish-pilot -- npx -y publish-pilot-mcp; then
+    echo "Claude Code: added"
+    touch "$DIR/claude-code-added"
+  else
+    echo "Claude Code: claude mcp add failed"
+  fi
+else
+  echo "Claude Code: claude not found"
+fi
+
+if [ -n "$NODE" ] && [ -d "$H/Library/Application Support/Claude" ]; then
+  run_as "$NODE" "$DIR/configure-desktop.mjs" add || echo "Claude Desktop: config not changed"
+else
+  echo "Claude Desktop: skipped (node or Claude Desktop not found)"
+fi
+exit 0

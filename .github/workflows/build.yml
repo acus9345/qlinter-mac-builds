@@ -1,0 +1,181 @@
+name: mac-builds
+
+# Builds the macOS downloads for qlinter.org from each tool's public repo, pinned to the
+# same source as the Windows installers. Each job smoke-tests what it built.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  color-picker:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: acus9345/Project-Color-Picker
+          ref: a657650c5e5f51eb2d64c6f1456cb56fd8b68a2d # ai-redesigned
+          path: src
+      - name: Build the app (the repo's own script)
+        working-directory: src
+        run: bash macos/build-app.sh
+      - name: Smoke test
+        run: |
+          lipo -info "src/dist/Project Color Picker.app/Contents/MacOS/tool1"
+          bash scripts/smoke-gui.sh "src/dist/Project Color Picker.app/Contents/MacOS/tool1"
+      - name: Disk image
+        run: bash scripts/make-dmg.sh "src/dist/Project Color Picker.app" "Project Color Picker" out/color-picker-1.0.1.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: color-picker
+          path: out/
+
+  shipkit:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: acus9345/shipkit
+          ref: v0.3.0
+          path: src
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        working-directory: src
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+      - name: Universal binary, self-test, package
+        run: |
+          mkdir -p root/usr/local/bin out
+          lipo -create -output root/usr/local/bin/ship \
+            src/target/aarch64-apple-darwin/release/ship \
+            src/target/x86_64-apple-darwin/release/ship
+          codesign --force --sign - root/usr/local/bin/ship
+          lipo -info root/usr/local/bin/ship
+          root/usr/local/bin/ship --version
+          root/usr/local/bin/ship self-test
+          pkgbuild --root root --identifier io.github.acus9345.shipkit --version 0.3.0 \
+            --install-location / out/shipkit-0.3.0.pkg
+          tar -czf out/ship-v0.3.0-universal-apple-darwin.tar.gz \
+            -C root/usr/local/bin ship -C "$GITHUB_WORKSPACE/src" LICENSE README.md
+      - name: Install test
+        run: |
+          sudo installer -pkg out/shipkit-0.3.0.pkg -target /
+          /usr/local/bin/ship --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shipkit
+          path: out/
+
+  publish-pilot:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package
+        run: |
+          app="root/Library/Application Support/publish-pilot"
+          mkdir -p "$app" pkg-scripts out
+          cp publish-pilot/env.sh publish-pilot/uninstall.sh publish-pilot/configure-desktop.mjs "$app/"
+          cp publish-pilot/postinstall pkg-scripts/postinstall
+          chmod 755 pkg-scripts/postinstall "$app/uninstall.sh"
+          pkgbuild --root root --scripts pkg-scripts --identifier io.github.acus9345.publish-pilot \
+            --version 0.4.0 --install-location / out/publish-pilot-0.4.0.pkg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install test (Claude Code + a Claude Desktop config with another server)
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          # Put node, npx and claude where a Homebrew-on-Intel Mac has them, since the
+          # installer runs with a bare PATH and setup-node's folder isn't a usual place.
+          for b in node npx claude; do sudo ln -sf "$(command -v $b)" /usr/local/bin/$b; done
+          cfg="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+          mkdir -p "$(dirname "$cfg")"
+          echo '{"mcpServers":{"other":{"command":"x"}},"theme":"dark"}' > "$cfg"
+          echo "console user: $(stat -f%Su /dev/console)"
+          sudo installer -pkg out/publish-pilot-0.4.0.pkg -target /
+          cat "/Library/Application Support/publish-pilot/install.log"
+          claude mcp get publish-pilot
+          cat "$cfg"
+          grep -q '"other"' "$cfg" && grep -q '"publish-pilot"' "$cfg"
+      - name: Uninstall test
+        run: |
+          cfg="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+          sudo bash "/Library/Application Support/publish-pilot/uninstall.sh"
+          if claude mcp get publish-pilot; then echo "still in Claude Code"; exit 1; fi
+          cat "$cfg"
+          grep -q '"other"' "$cfg" && ! grep -q '"publish-pilot"' "$cfg"
+          test ! -d "/Library/Application Support/publish-pilot"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish-pilot
+          path: out/
+
+  pkgstats:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: acus9345/pkgstats
+          ref: v0.1.5
+          path: src
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        working-directory: src
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+      - name: App bundle
+        run: |
+          mkdir -p build dist
+          lipo -create -output build/pkgstats \
+            src/target/aarch64-apple-darwin/release/pkgstats \
+            src/target/x86_64-apple-darwin/release/pkgstats
+          lipo -info build/pkgstats
+          bash scripts/make-app.sh build/pkgstats PkgStats io.github.acus9345.pkgstats 0.1.5 src/assets/icon.png dist
+      - name: Smoke test
+        run: bash scripts/smoke-gui.sh dist/PkgStats.app/Contents/MacOS/pkgstats
+      - name: Disk image
+        run: bash scripts/make-dmg.sh dist/PkgStats.app PkgStats out/pkgstats-0.1.5.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkgstats
+          path: out/
+
+  singbox-watch:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: acus9345/singbox-proxymanager-forclaude
+          ref: 2af30e0ae4f5a163fcb0f819276b47925061fb1f # mac branch
+          path: src
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        working-directory: src
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+      - name: Universal binary + the repo's install scripts (same as its build-macos workflow)
+        run: |
+          d=dist/singbox-watch-mac
+          mkdir -p "$d" out
+          lipo -create -output "$d/singbox-watch-mac" \
+            src/target/aarch64-apple-darwin/release/singbox-watch-mac \
+            src/target/x86_64-apple-darwin/release/singbox-watch-mac
+          codesign --force --sign - "$d/singbox-watch-mac"
+          cp src/install.sh src/keep-alive.sh src/README.md src/LICENSE "$d/"
+          chmod 755 "$d/install.sh" "$d/keep-alive.sh"
+          "$d/singbox-watch-mac" --kill-list
+          tar -czf out/singbox-watch-mac-1.0.0.tar.gz -C dist singbox-watch-mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: singbox-watch
+          path: out/
