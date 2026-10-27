@@ -26,7 +26,8 @@ jobs:
       - name: Smoke test
         run: |
           lipo -info "src/dist/Project Color Picker.app/Contents/MacOS/tool1"
-          bash scripts/smoke-gui.sh "src/dist/Project Color Picker.app/Contents/MacOS/tool1"
+          # macroquad needs OpenGL, which GitHub's macOS VMs don't provide
+          bash scripts/smoke-gui.sh "src/dist/Project Color Picker.app/Contents/MacOS/tool1" "glpixelformat_obj.is_null"
       - name: Disk image
         run: bash scripts/make-dmg.sh "src/dist/Project Color Picker.app" "Project Color Picker" out/color-picker-1.0.1.dmg
       - uses: actions/upload-artifact@v4
