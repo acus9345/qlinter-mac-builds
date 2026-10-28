@@ -124,7 +124,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: acus9345/pkgstats
-          ref: v0.1.5
+          ref: v0.1.6
           path: src
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Build both architectures
@@ -139,11 +139,11 @@ jobs:
             src/target/aarch64-apple-darwin/release/pkgstats \
             src/target/x86_64-apple-darwin/release/pkgstats
           lipo -info build/pkgstats
-          bash scripts/make-app.sh build/pkgstats PkgStats io.github.acus9345.pkgstats 0.1.5 src/assets/icon.png dist
+          bash scripts/make-app.sh build/pkgstats PkgStats io.github.acus9345.pkgstats 0.1.6 src/assets/icon.png dist
       - name: Smoke test
         run: bash scripts/smoke-gui.sh dist/PkgStats.app/Contents/MacOS/pkgstats
       - name: Disk image
-        run: bash scripts/make-dmg.sh dist/PkgStats.app PkgStats out/pkgstats-0.1.5.dmg
+        run: bash scripts/make-dmg.sh dist/PkgStats.app PkgStats out/pkgstats-0.1.6.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: pkgstats
